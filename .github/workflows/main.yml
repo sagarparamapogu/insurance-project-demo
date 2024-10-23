@@ -1,0 +1,90 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Checkout the code from GitHub
+    - name: Checkout Code
+      uses: actions/checkout@v3
+      with:
+        repository: sagarparamapogu/insurance-project-demo
+
+    # Maven Build
+    - name: Build with Maven
+      run: mvn clean package
+
+    # Containerize the application using Docker
+    - name: Build Docker Image
+      run: docker build -t sagarparamapogu/insure-me:1.0 .
+
+    # Docker Hub Login & Push Image
+    - name: Docker Hub Login
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+      run: echo "${DOCKERHUB_PASSWORD}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+    - name: Push Docker Image to Docker Hub
+      run: docker push sagarparamapogu/insure-me:1.0
+
+  # Deploy to Test Environment
+  deploy_test:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+      with:
+        repository: sagarparamapogu/insurance-project-demo
+
+    - name: Deploy to Test Environment
+      uses: appleboy/ssh-action@v0.1.8
+      with:
+        host: ${{ secrets.TEST_SERVER_HOST }}
+        username: ${{ secrets.TEST_SERVER_USER }}
+        key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+        script: ansible-playbook -i /etc/ansible/hosts configure-test-server.yml --become
+
+  # Checkout and Build Selenium Test Source Code
+  regression_tests:
+    needs: deploy_test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Selenium Test Source Code
+      uses: actions/checkout@v3
+      with:
+        repository: sagarparamapogu/my-selenium-test-app
+
+    - name: Build Test Scripts
+      run: mvn clean package assembly:single
+
+    - name: Execute Selenium Test Script
+      run: java -jar target/my-app-test-0.0.1-SNAPSHOT-jar-with-dependencies.jar
+
+  # Deploy to Production
+  deploy_prod:
+    needs: regression_tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+      with:
+        repository: sagarparamapogu/insurance-project-demo
+
+    - name: Deploy to Production Environment
+      uses: appleboy/ssh-action@v0.1.8
+      with:
+        host: ${{ secrets.PROD_SERVER_HOST }}
+        username: ${{ secrets.PROD_SERVER_USER }}
+        key: ${{ secrets.PROD_SERVER_SSH_KEY }}
+        script: ansible-playbook -i /etc/ansible/hosts configure-prod-server.yml --become
